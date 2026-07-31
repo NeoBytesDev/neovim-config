@@ -5,7 +5,7 @@
 vim.opt.tabstop = 4
 vim.opt.shiftwidth = 4
 vim.opt.softtabstop = 4
--- vim.opt.colorcolumn = "110"
+vim.opt.colorcolumn = "100"
 
 -- UI
 vim.opt.number = true
@@ -303,6 +303,7 @@ require("lazy").setup({
 
                 vim.lsp.enable("pyright")
                 vim.lsp.enable("clangd")
+				vim.lsp.enable("neocmakelsp")
             end,
         },
         {
