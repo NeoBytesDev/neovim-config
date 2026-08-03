@@ -22,6 +22,14 @@ vim.opt.ignorecase = true             -- case-insensitive search...
 vim.opt.smartcase = true              -- ...unless the query has uppercase
 vim.opt.swapfile = false              -- no swap files
 
+-- Folding (treesitter-based, VSCode style)
+vim.opt.foldmethod = "expr"
+vim.opt.foldexpr = "v:lua.vim.treesitter.foldexpr()"
+vim.opt.foldtext = ""      -- keep syntax highlighting on the folded line
+vim.opt.foldlevel = 99     -- everything unfolded on open
+vim.opt.foldlevelstart = 99
+vim.opt.fillchars:append({ fold = " " })
+
 -- Leader keys (must be set before lazy)
 vim.g.mapleader = " "
 vim.g.maplocalleader = "\\"
@@ -71,6 +79,12 @@ vim.diagnostic.config({
 -- Keymaps
 -- ========================================================================
 local map = vim.keymap.set
+
+-- Folding
+map({ "n", "v" }, "<A-f>", "za",      { desc = "Toggle fold" })
+map("i",          "<A-f>", "<C-o>za", { desc = "Toggle fold" })
+map("n", "<leader>zr", "zR", { desc = "Unfold all" })
+map("n", "<leader>zm", "zM", { desc = "Fold all" })
 
 -- Move by word (VSCode style)
 map({ "n", "v" }, "<C-Left>",  "b", { desc = "Word left" })
