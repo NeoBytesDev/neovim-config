@@ -72,6 +72,12 @@ vim.diagnostic.config({
 -- ========================================================================
 local map = vim.keymap.set
 
+-- Move by word (VSCode style)
+map({ "n", "v" }, "<C-Left>",  "b", { desc = "Word left" })
+map({ "n", "v" }, "<C-Right>", "w", { desc = "Word right" })
+map("i", "<C-Left>",  "<cmd>normal! b<cr>", { desc = "Word left" })
+map("i", "<C-Right>", "<cmd>normal! w<cr>", { desc = "Word right" })
+
 -- Save file (and return to normal mode)
 map("n", "<C-s>", "<cmd>w<cr>",        { desc = "Save file" })
 map("i", "<C-s>", "<esc><cmd>w<cr>",   { desc = "Save file" })
@@ -119,6 +125,58 @@ map("v", "<C-S-Down>", ":m '>+1<cr>gv=gv", { desc = "Move selection down" })
 -- Splits
 map("n", "<leader>v", "<cmd>vsplit<cr>", { desc = "Vertical split" })
 map("n", "<leader>h", "<cmd>split<cr>",  { desc = "Horizontal split" })
+
+-- ------------------------------------------------------------------
+-- Word-wise movement (VSCode style)
+-- ------------------------------------------------------------------
+-- Like w/b, but never crosses a line boundary: past the last word the
+-- cursor stops at end of line, before the first word at column 1.
+local function word_move(dir)
+    local pos    = vim.api.nvim_win_get_cursor(0)
+    local len    = #vim.api.nvim_get_current_line()
+    local insert = vim.api.nvim_get_mode().mode:find("^i") ~= nil
+
+    vim.cmd("normal! " .. (dir == "right" and "w" or "b"))
+
+    -- The motion wrapped onto another line: clamp back to this one.
+    if vim.api.nvim_win_get_cursor(0)[1] ~= pos[1] then
+        local col = 0
+        if dir == "right" then
+            -- insert mode may sit one past the last character
+            col = insert and len or math.max(len - 1, 0)
+        end
+        vim.api.nvim_win_set_cursor(0, { pos[1], col })
+    end
+end
+
+-- Start a selection if there isn't one, then extend it by a word.
+local function word_select(dir)
+    if not vim.api.nvim_get_mode().mode:find("^[vV\22]") then
+        vim.cmd("normal! v")
+    end
+    word_move(dir)
+end
+
+-- Same, but starting from insert mode: <Esc> lands one column left, so
+-- step back right unless we were at the start of the line or already
+-- past its last character.
+local function word_select_i(dir)
+    local col   = vim.api.nvim_win_get_cursor(0)[2]
+    local len   = #vim.api.nvim_get_current_line()
+    local nudge = dir == "right" and col > 0 and col < len
+    vim.api.nvim_feedkeys(vim.keycode(nudge and "<Esc>lv" or "<Esc>v"), "nx", false)
+    word_move(dir)
+end
+
+-- Move by word
+map({ "n", "v", "i" }, "<C-Left>",  function() word_move("left")  end, { desc = "Word left" })
+map({ "n", "v", "i" }, "<C-Right>", function() word_move("right") end, { desc = "Word right" })
+
+-- Select by word
+map({ "n", "v" }, "<C-S-Left>",  function() word_select("left")  end, { desc = "Select word left" })
+map({ "n", "v" }, "<C-S-Right>", function() word_select("right") end, { desc = "Select word right" })
+map("i", "<C-S-Left>",  function() word_select_i("left")  end, { desc = "Select word left" })
+map("i", "<C-S-Right>", function() word_select_i("right") end, { desc = "Select word right" })
 
 -- Close split if there are several; otherwise close the buffer
 map("n", "<C-q>", function()
