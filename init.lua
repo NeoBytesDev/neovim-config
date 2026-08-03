@@ -20,6 +20,7 @@ vim.opt.clipboard = "unnamedplus"     -- share clipboard with the system
 vim.opt.undofile = true               -- persistent undo across sessions
 vim.opt.ignorecase = true             -- case-insensitive search...
 vim.opt.smartcase = true              -- ...unless the query has uppercase
+vim.opt.swapfile = false              -- no swap files
 
 -- Leader keys (must be set before lazy)
 vim.g.mapleader = " "
@@ -71,12 +72,18 @@ vim.diagnostic.config({
 -- ========================================================================
 local map = vim.keymap.set
 
+-- Save file (and return to normal mode)
+map("n", "<C-s>", "<cmd>w<cr>",        { desc = "Save file" })
+map("i", "<C-s>", "<esc><cmd>w<cr>",   { desc = "Save file" })
+map("v", "<C-s>", "<esc><cmd>w<cr>",   { desc = "Save file" })
+
 -- Quit nvim entirely (asks about unsaved files)
 map("n", "<leader>q", "<cmd>confirm qa<cr>", { desc = "Quit nvim" })
 
 -- Indent / dedent
 map("n", "<S-Tab>", "<<",    { desc = "Dedent line" })
 map("i", "<S-Tab>", "<C-d>", { desc = "Dedent line" })
+map("v", "<Tab>",   ">gv",   { desc = "Indent selection" })
 map("v", "<S-Tab>", "<gv",   { desc = "Dedent selection" })
 map("n", "<Tab>",   ">>",    { desc = "Indent line" })
 map("v", "<Tab>",   ">gv",   { desc = "Indent selection" })
@@ -317,18 +324,62 @@ require("lazy").setup({
                 },
             },
         },
-        {
-            "ray-x/lsp_signature.nvim",
-            event = "InsertEnter",
-            opts = {
-                bind = true,
-                hint_enable = false,                   -- no inline virtual-text hint, float only
-                handler_opts = { border = "rounded" },
-                floating_window_above_cur_line = true, -- hover above the line, like VSCode
-                toggle_key = "<C-g>",                  -- manually show/hide while typing
-                select_signature_key = "<A-n>",        -- cycle overloads
-            },
-        },
+	{
+	    "ray-x/lsp_signature.nvim",
+	    event = "InsertEnter",
+	    opts = {
+		bind = true,
+		hint_enable = false,
+		handler_opts = { border = "rounded" },
+		floating_window_above_cur_line = true,
+		toggle_key = "<C-g>",
+		select_signature_key = "<A-n>",
+		fix_pos = false,     -- don't pin the window open until all params are filled
+		close_timeout = 200, -- ms after the last parameter is entered
+	    },
+	    config = function(_, opts)
+		require("lsp_signature").setup(opts)
+
+		-- The float is created via vim.lsp.util.open_floating_preview,
+		-- which records its window id in b:lsp_floating_preview.
+		local function sig_win()
+		    local w = vim.b.lsp_floating_preview
+		    if w and vim.api.nvim_win_is_valid(w) then
+		        return w
+		    end
+		end
+
+		-- Unclosed "(" before the cursor, on this line only?
+		local function in_args()
+		    return vim.fn.searchpairpos("(", "", ")", "nbW", "", vim.fn.line("."))[1] ~= 0
+		end
+
+		local anchor -- { buf, line } the float was opened on
+
+		vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "InsertLeave" }, {
+		    group = vim.api.nvim_create_augroup("SignatureAutoClose", { clear = true }),
+		    callback = function(ev)
+		        local win = sig_win()
+		        if not win then
+		            anchor = nil
+		            return
+		        end
+
+		        local line = vim.fn.line(".")
+		        anchor = anchor or { buf = ev.buf, line = line }
+
+		        if ev.event == "InsertLeave"
+		            or ev.buf ~= anchor.buf
+		            or line ~= anchor.line
+		            or not in_args()
+		        then
+		            pcall(vim.api.nvim_win_close, win, true)
+		            anchor = nil
+		        end
+		    end,
+		})
+	    end,
+	},
     },
     checker = { enabled = true },
 })
