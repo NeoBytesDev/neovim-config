@@ -382,7 +382,7 @@ require("lazy").setup({
 
                 vim.lsp.enable("pyright")
                 vim.lsp.enable("clangd")
-				vim.lsp.enable("neocmakelsp")
+				vim.lsp.enable("neocmake")
             end,
         },
         {
