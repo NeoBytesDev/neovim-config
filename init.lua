@@ -15,7 +15,8 @@ vim.opt.scrolloff = 8           -- keep 8 lines visible around the cursor
 vim.opt.signcolumn = "yes"      -- stable gutter (no shifting when signs appear)
 
 -- Behavior
-vim.opt.keymodel = "startsel,stopsel" -- Shift+Home/End/PgUp/PgDn selects
+vim.opt.keymodel = "startsel,stopsel" -- Shift+Home/End/PgUp/PgDn/arrows select
+vim.opt.selectmode = "key"            -- ...into Select mode: typing replaces it
 vim.opt.clipboard = "unnamedplus"     -- share clipboard with the system
 vim.opt.undofile = true               -- persistent undo across sessions
 vim.opt.ignorecase = true             -- case-insensitive search...
@@ -78,63 +79,106 @@ vim.diagnostic.config({
 -- ========================================================================
 -- Keymaps
 -- ========================================================================
+-- Mode letters below: "x" = Visual only, "s" = Select only.
+-- ("v" means *both*, which breaks Select mode: the RHS gets typed as text
+-- over the selection instead of running as a command.)
 local map = vim.keymap.set
 
+-- Run a Visual-mode command on a Select-mode selection, then return to
+-- Select mode. <C-g> toggles Select <-> Visual; where a command leaves us
+-- varies, so check the mode afterwards and only flip back if needed.
+local function keep_select(keys, remap)
+    return function()
+        vim.api.nvim_feedkeys(vim.keycode("<C-g>" .. keys), (remap and "m" or "n") .. "x", false)
+        if vim.api.nvim_get_mode().mode:find("^[vV\22]") then
+            vim.api.nvim_feedkeys(vim.keycode("<C-g>"), "nx", false)
+        end
+    end
+end
+
 -- Folding
-map({ "n", "v" }, "<A-f>", "za",      { desc = "Toggle fold" })
+map({ "n", "x" }, "<A-f>", "za",      { desc = "Toggle fold" })
 map("i",          "<A-f>", "<C-o>za", { desc = "Toggle fold" })
 map("n", "<leader>zr", "zR", { desc = "Unfold all" })
 map("n", "<leader>zm", "zM", { desc = "Fold all" })
 
--- Move by word (VSCode style)
-map({ "n", "v" }, "<C-Left>",  "b", { desc = "Word left" })
-map({ "n", "v" }, "<C-Right>", "w", { desc = "Word right" })
-map("i", "<C-Left>",  "<cmd>normal! b<cr>", { desc = "Word left" })
-map("i", "<C-Right>", "<cmd>normal! w<cr>", { desc = "Word right" })
-
 -- Save file (and return to normal mode)
-map("n", "<C-s>", "<cmd>w<cr>",        { desc = "Save file" })
-map("i", "<C-s>", "<esc><cmd>w<cr>",   { desc = "Save file" })
-map("v", "<C-s>", "<esc><cmd>w<cr>",   { desc = "Save file" })
+map("n",          "<C-s>", "<cmd>w<cr>",      { desc = "Save file" })
+map("i",          "<C-s>", "<esc><cmd>w<cr>", { desc = "Save file" })
+map({ "x", "s" }, "<C-s>", "<esc><cmd>w<cr>", { desc = "Save file" })
 
 -- Quit nvim entirely (asks about unsaved files)
 map("n", "<leader>q", "<cmd>confirm qa<cr>", { desc = "Quit nvim" })
 
 -- Indent / dedent
+map("n", "<Tab>",   ">>",    { desc = "Indent line" })
 map("n", "<S-Tab>", "<<",    { desc = "Dedent line" })
 map("i", "<S-Tab>", "<C-d>", { desc = "Dedent line" })
-map("v", "<Tab>",   ">gv",   { desc = "Indent selection" })
-map("v", "<S-Tab>", "<gv",   { desc = "Dedent selection" })
-map("n", "<Tab>",   ">>",    { desc = "Indent line" })
-map("v", "<Tab>",   ">gv",   { desc = "Indent selection" })
+map("x", "<Tab>",   ">gv",   { desc = "Indent selection" })
+map("x", "<S-Tab>", "<gv",   { desc = "Dedent selection" })
+map("s", "<Tab>",   keep_select(">gv"),      { desc = "Indent selection" })
+map("s", "<S-Tab>", keep_select("<lt>gv"),   { desc = "Dedent selection" })
 
--- Copy / paste (system clipboard)
-map("v", "<C-c>", '"+y',          { desc = "Copy selection" })
-map("n", "<C-c>", '"+yy',         { desc = "Copy line" })
-map({ "n", "v" }, "<C-v>", '"+p', { desc = "Paste" })
-map("i", "<C-v>", "<C-r>+",       { desc = "Paste" })
+-- Select all
+map({ "n", "i", "x", "s" }, "<C-a>", "<esc>gg0vG$<C-g>", { desc = "Select all" })
+
+-- Copy / cut / paste (system clipboard)
+-- Visual "P" pastes without clobbering the clipboard with what it replaced,
+-- so pasting the same text twice in a row works.
+map("n", "<C-c>", '"+yy',     { desc = "Copy line" })
+map("x", "<C-c>", '"+y',      { desc = "Copy selection" })
+map("s", "<C-c>", '<C-g>"+y', { desc = "Copy selection" })
+
+map("n", "<C-x>", '"+dd',     { desc = "Cut line" })
+map("x", "<C-x>", '"+d',      { desc = "Cut selection" })
+map("s", "<C-x>", '<C-g>"+d', { desc = "Cut selection" })
+
+map("n", "<C-v>", '"+p',      { desc = "Paste" })
+map("x", "<C-v>", '"+P',      { desc = "Paste over selection" })
+map("s", "<C-v>", '<C-g>"+P', { desc = "Paste over selection" })
+map("i", "<C-v>", "<C-g>u<C-r><C-o>+", { desc = "Paste" }) -- <C-o>: paste literally, no re-indent
 
 -- Undo / redo
-map("n", "<C-z>", "u",          { desc = "Undo" })
-map("i", "<C-z>", "<C-o>u",     { desc = "Undo" })
-map("n", "<C-y>", "<C-r>",      { desc = "Redo" })
-map("i", "<C-y>", "<C-o><C-r>", { desc = "Redo" })
+-- <cmd>undo<cr> runs the command without leaving insert mode; <C-o>u drops
+-- out and back in, which is what was moving the cursor.
+map("n",          "<C-z>", "u",                     { desc = "Undo" })
+map("i",          "<C-z>", "<cmd>undo<cr>",         { desc = "Undo" })
+map({ "x", "s" }, "<C-z>", "<esc><cmd>undo<cr>",    { desc = "Undo" })
 
--- Toggle comment (VSCode style; <C-_> is how terminals send Ctrl+/)
-map("n", "<C-_>", "gcc", { remap = true, desc = "Toggle comment" })
-map("v", "<C-_>", "gc",  { remap = true, desc = "Toggle comment" })
-map("n", "<C-/>", "gcc", { remap = true, desc = "Toggle comment" })
-map("v", "<C-/>", "gc",  { remap = true, desc = "Toggle comment" })
+for _, key in ipairs({ "<C-y>", "<C-S-z>" }) do
+    map("n",          key, "<C-r>",                  { desc = "Redo" })
+    map("i",          key, "<cmd>redo<cr>",          { desc = "Redo" })
+    map({ "x", "s" }, key, "<esc><cmd>redo<cr>",     { desc = "Redo" })
+end
+
+-- Vim undoes a whole insert session at once; VSCode undoes small chunks.
+-- Break the undo block after these keys so <C-z> takes back a word or a
+-- clause instead of everything you just typed.
+for _, key in ipairs({ "<Space>", ".", ",", ";", ":" }) do
+    map("i", key, key .. "<C-g>u", { desc = "Undo breakpoint" })
+end
+
+-- Toggle comment (VSCode style; <C-_> is how most terminals send Ctrl+/)
+for _, key in ipairs({ "<C-_>", "<C-/>" }) do
+    map("n", key, "gcc", { remap = true, desc = "Toggle comment" })
+    map("x", key, "gc",  { remap = true, desc = "Toggle comment" })
+    map("s", key, keep_select("gc", true), { desc = "Toggle comment" })
+end
 
 -- Move line / selection up and down
-map("n", "<A-Up>",     "<cmd>m .-2<cr>==", { desc = "Move line up" })
-map("n", "<A-Down>",   "<cmd>m .+1<cr>==", { desc = "Move line down" })
-map("n", "<C-S-Up>",   "<cmd>m .-2<cr>==", { desc = "Move line up" })
-map("n", "<C-S-Down>", "<cmd>m .+1<cr>==", { desc = "Move line down" })
-map("i", "<C-S-Up>",   "<esc><cmd>m .-2<cr>==gi", { desc = "Move line up" })
-map("i", "<C-S-Down>", "<esc><cmd>m .+1<cr>==gi", { desc = "Move line down" })
-map("v", "<C-S-Up>",   ":m '<-2<cr>gv=gv", { desc = "Move selection up" })
-map("v", "<C-S-Down>", ":m '>+1<cr>gv=gv", { desc = "Move selection down" })
+for _, key in ipairs({ "<A-Up>", "<C-S-Up>" }) do
+    map("n", key, "<cmd>m .-2<cr>==",             { desc = "Move line up" })
+    map("i", key, "<esc><cmd>m .-2<cr>==gi",      { desc = "Move line up" })
+    map("x", key, ":m '<-2<cr>gv=gv",             { desc = "Move selection up" })
+    map("s", key, keep_select(":m '<lt>-2<cr>gv=gv"), { desc = "Move selection up" })
+end
+
+for _, key in ipairs({ "<A-Down>", "<C-S-Down>" }) do
+    map("n", key, "<cmd>m .+1<cr>==",             { desc = "Move line down" })
+    map("i", key, "<esc><cmd>m .+1<cr>==gi",      { desc = "Move line down" })
+    map("x", key, ":m '>+1<cr>gv=gv",             { desc = "Move selection down" })
+    map("s", key, keep_select(":m '>+1<cr>gv=gv"), { desc = "Move selection down" })
+end
 
 -- Splits
 map("n", "<leader>v", "<cmd>vsplit<cr>", { desc = "Vertical split" })
@@ -145,6 +189,9 @@ map("n", "<leader>h", "<cmd>split<cr>",  { desc = "Horizontal split" })
 -- ------------------------------------------------------------------
 -- Like w/b, but never crosses a line boundary: past the last word the
 -- cursor stops at end of line, before the first word at column 1.
+--
+-- Selecting by word (<C-S-Left/Right>) is left to Vim: with keymodel=startsel
+-- it strips the Shift, starts the selection and reuses these same mappings.
 local function word_move(dir)
     local pos    = vim.api.nvim_win_get_cursor(0)
     local len    = #vim.api.nvim_get_current_line()
@@ -163,34 +210,8 @@ local function word_move(dir)
     end
 end
 
--- Start a selection if there isn't one, then extend it by a word.
-local function word_select(dir)
-    if not vim.api.nvim_get_mode().mode:find("^[vV\22]") then
-        vim.cmd("normal! v")
-    end
-    word_move(dir)
-end
-
--- Same, but starting from insert mode: <Esc> lands one column left, so
--- step back right unless we were at the start of the line or already
--- past its last character.
-local function word_select_i(dir)
-    local col   = vim.api.nvim_win_get_cursor(0)[2]
-    local len   = #vim.api.nvim_get_current_line()
-    local nudge = dir == "right" and col > 0 and col < len
-    vim.api.nvim_feedkeys(vim.keycode(nudge and "<Esc>lv" or "<Esc>v"), "nx", false)
-    word_move(dir)
-end
-
--- Move by word
-map({ "n", "v", "i" }, "<C-Left>",  function() word_move("left")  end, { desc = "Word left" })
-map({ "n", "v", "i" }, "<C-Right>", function() word_move("right") end, { desc = "Word right" })
-
--- Select by word
-map({ "n", "v" }, "<C-S-Left>",  function() word_select("left")  end, { desc = "Select word left" })
-map({ "n", "v" }, "<C-S-Right>", function() word_select("right") end, { desc = "Select word right" })
-map("i", "<C-S-Left>",  function() word_select_i("left")  end, { desc = "Select word left" })
-map("i", "<C-S-Right>", function() word_select_i("right") end, { desc = "Select word right" })
+map({ "n", "x", "i" }, "<C-Left>",  function() word_move("left")  end, { desc = "Word left" })
+map({ "n", "x", "i" }, "<C-Right>", function() word_move("right") end, { desc = "Word right" })
 
 -- Close split if there are several; otherwise close the buffer
 map("n", "<C-q>", function()
@@ -374,15 +395,9 @@ require("lazy").setup({
                 { "mason-org/mason-lspconfig.nvim", opts = {} },
             },
             config = function()
-                vim.lsp.config("clangd", {
-                    init_options = {
-                        fallbackFlags = { "-std=c++23" },
-                    },
-                })
-
                 vim.lsp.enable("pyright")
                 vim.lsp.enable("clangd")
-				vim.lsp.enable("neocmake")
+                vim.lsp.enable("neocmake")
             end,
         },
         {
@@ -396,62 +411,62 @@ require("lazy").setup({
                 },
             },
         },
-		{
-			"ray-x/lsp_signature.nvim",
-			event = "InsertEnter",
-			opts = {
-			bind = true,
-			hint_enable = false,
-			handler_opts = { border = "rounded" },
-			floating_window_above_cur_line = true,
-			toggle_key = "<C-g>",
-			select_signature_key = "<A-n>",
-			fix_pos = false,     -- don't pin the window open until all params are filled
-			close_timeout = 200, -- ms after the last parameter is entered
-			},
-			config = function(_, opts)
-			require("lsp_signature").setup(opts)
+        {
+            "ray-x/lsp_signature.nvim",
+            event = "InsertEnter",
+            opts = {
+                bind = true,
+                hint_enable = false,
+                handler_opts = { border = "rounded" },
+                floating_window_above_cur_line = true,
+                toggle_key = "<C-g>",
+                select_signature_key = "<A-n>",
+                fix_pos = false,     -- don't pin the window open until all params are filled
+                close_timeout = 200, -- ms after the last parameter is entered
+            },
+            config = function(_, opts)
+                require("lsp_signature").setup(opts)
 
-			-- The float is created via vim.lsp.util.open_floating_preview,
-			-- which records its window id in b:lsp_floating_preview.
-			local function sig_win()
-				local w = vim.b.lsp_floating_preview
-				if w and vim.api.nvim_win_is_valid(w) then
-					return w
-				end
-			end
+                -- The float is created via vim.lsp.util.open_floating_preview,
+                -- which records its window id in b:lsp_floating_preview.
+                local function sig_win()
+                    local w = vim.b.lsp_floating_preview
+                    if w and vim.api.nvim_win_is_valid(w) then
+                        return w
+                    end
+                end
 
-			-- Unclosed "(" before the cursor, on this line only?
-			local function in_args()
-				return vim.fn.searchpairpos("(", "", ")", "nbW", "", vim.fn.line("."))[1] ~= 0
-			end
+                -- Unclosed "(" before the cursor, on this line only?
+                local function in_args()
+                    return vim.fn.searchpairpos("(", "", ")", "nbW", "", vim.fn.line("."))[1] ~= 0
+                end
 
-			local anchor -- { buf, line } the float was opened on
+                local anchor -- { buf, line } the float was opened on
 
-			vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "InsertLeave" }, {
-				group = vim.api.nvim_create_augroup("SignatureAutoClose", { clear = true }),
-				callback = function(ev)
-					local win = sig_win()
-					if not win then
-						anchor = nil
-						return
-					end
+                vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "InsertLeave" }, {
+                    group = vim.api.nvim_create_augroup("SignatureAutoClose", { clear = true }),
+                    callback = function(ev)
+                        local win = sig_win()
+                        if not win then
+                            anchor = nil
+                            return
+                        end
 
-					local line = vim.fn.line(".")
-					anchor = anchor or { buf = ev.buf, line = line }
+                        local line = vim.fn.line(".")
+                        anchor = anchor or { buf = ev.buf, line = line }
 
-					if ev.event == "InsertLeave"
-						or ev.buf ~= anchor.buf
-						or line ~= anchor.line
-						or not in_args()
-					then
-						pcall(vim.api.nvim_win_close, win, true)
-						anchor = nil
-					end
-				end,
-			})
-			end,
-		},
+                        if ev.event == "InsertLeave"
+                            or ev.buf ~= anchor.buf
+                            or line ~= anchor.line
+                            or not in_args()
+                        then
+                            pcall(vim.api.nvim_win_close, win, true)
+                            anchor = nil
+                        end
+                    end,
+                })
+            end,
+        },
     },
     checker = { enabled = true },
 })
