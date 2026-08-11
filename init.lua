@@ -47,9 +47,23 @@ vim.api.nvim_create_autocmd("FileType", {
         -- Treesitter indent is experimental; skip languages where
         -- vim's built-in indent is better (C-family)
         local skip_ts_indent = { c = true, cpp = true, java = true }
-        if not skip_ts_indent[vim.bo[ev.buf].filetype] then
+        if skip_ts_indent[vim.bo[ev.buf].filetype] then
+            -- C-family uses 'cindent', which reads 'cinkeys' rather than
+            -- 'indentkeys'. Same relic there: drop "0#" so #pragma / #if
+            -- keep their indentation inside a block instead of snapping
+            -- to column 0.
+            vim.opt_local.cinkeys:remove("0#")
+        else
             vim.bo[ev.buf].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
         end
+
+        -- Typing a key listed in 'indentkeys' re-runs 'indentexpr' on the
+        -- line. Two of the defaults are C relics that fire in every
+        -- filetype: "0#" (put preprocessor lines in column 0 -- this is
+        -- what breaks typing "#" at the start of an indented Python or
+        -- shell comment) and "e" ("else"). Keep the brace rules and ":",
+        -- which Python's dedent needs.
+        vim.opt_local.indentkeys:remove({ "0#", "e" })
     end,
 })
 
@@ -95,6 +109,10 @@ local function keep_select(keys, remap)
         end
     end
 end
+
+-- Ctrl+3 sends the terminal's ^[ (plain <Esc>) and can't be intercepted
+-- there. In GUIs / kitty-protocol terminals it arrives as its own key.
+map({ "n", "i", "x", "s" }, "<C-3>", "<Nop>", { desc = "Disabled" })
 
 -- Folding
 map({ "n", "x" }, "<A-f>", "za",      { desc = "Toggle fold" })
@@ -158,11 +176,31 @@ for _, key in ipairs({ "<Space>", ".", ",", ";", ":" }) do
     map("i", key, key .. "<C-g>u", { desc = "Undo breakpoint" })
 end
 
--- Toggle comment (VSCode style; <C-_> is how most terminals send Ctrl+/)
-for _, key in ipairs({ "<C-_>", "<C-/>" }) do
-    map("n", key, "gcc", { remap = true, desc = "Toggle comment" })
-    map("x", key, "gc",  { remap = true, desc = "Toggle comment" })
-    map("s", key, keep_select("gc", true), { desc = "Toggle comment" })
+-- Toggle comment (VSCode style)
+-- Visual and Select differ only in how the selection got made, so route
+-- every mode through one function instead of a string mapping per mode.
+local function toggle_comment()
+    local mode   = vim.api.nvim_get_mode().mode
+    local select = mode:find("^[sS\19]") ~= nil
+    local visual = select or mode:find("^[vV\22]") ~= nil
+
+    if not visual then
+        vim.cmd("normal gcc") -- no "!": gcc is a mapping, not a builtin
+        return
+    end
+
+    -- Drop the selection so '< and '> are set, comment that range, restore.
+    vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "nx", false)
+    vim.cmd("normal gvgc")
+    vim.cmd("normal! gv")
+
+    if select then
+        vim.api.nvim_feedkeys(vim.keycode("<C-g>"), "nx", false)
+    end
+end
+
+for _, key in ipairs({ "<C-_>", "<C-/>", "<A-c>" }) do
+    map({ "n", "i", "x", "s" }, key, toggle_comment, { desc = "Toggle comment" })
 end
 
 -- Move line / selection up and down
@@ -172,7 +210,6 @@ for _, key in ipairs({ "<A-Up>", "<C-S-Up>" }) do
     map("x", key, ":m '<-2<cr>gv=gv",             { desc = "Move selection up" })
     map("s", key, keep_select(":m '<lt>-2<cr>gv=gv"), { desc = "Move selection up" })
 end
-
 for _, key in ipairs({ "<A-Down>", "<C-S-Down>" }) do
     map("n", key, "<cmd>m .+1<cr>==",             { desc = "Move line down" })
     map("i", key, "<esc><cmd>m .+1<cr>==gi",      { desc = "Move line down" })
