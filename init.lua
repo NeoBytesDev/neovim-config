@@ -250,6 +250,94 @@ end
 map({ "n", "x", "i" }, "<C-Left>",  function() word_move("left")  end, { desc = "Word left" })
 map({ "n", "x", "i" }, "<C-Right>", function() word_move("right") end, { desc = "Word right" })
 
+-- ------------------------------------------------------------------
+-- Find / Replace (VSCode style)
+-- ------------------------------------------------------------------
+-- <C-f> and <C-h> open the command line seeded with the selection, with
+-- the cursor where you'd start typing; <cr> runs it. <F3> / <S-F3> walk
+-- the matches, <Esc> clears the highlighting.
+--
+-- Note: many terminals send ^H for Ctrl+Backspace, so the insert-mode
+-- half of <C-h> shadows it. Drop "i" from that map if you use it.
+
+-- Select mode has its own mode letters; getregion() only knows Visual's.
+local visual_kind = {
+    v = "v", V = "V", ["\22"] = "\22", -- Visual, line, block
+    s = "v", S = "V", ["\19"] = "\22", -- the Select equivalents
+}
+
+-- The selected lines, or nil if there's no selection.
+local function selected_lines()
+    local kind = visual_kind[vim.api.nvim_get_mode().mode]
+    if not kind then
+        return nil
+    end
+    local ok, lines = pcall(vim.fn.getregion,
+        vim.fn.getpos("v"), vim.fn.getpos("."), { type = kind })
+    return ok and #lines > 0 and lines or nil
+end
+
+-- One line of selected text, or nil -- VSCode only seeds the find box
+-- from a single-line selection too.
+local function selected_word(lines)
+    if lines and #lines == 1 and lines[1] ~= "" then
+        return lines[1]
+    end
+end
+
+-- Escape for use as a \V ("very nomagic") pattern, where only the
+-- backslash and the / delimiter still mean anything.
+local function pattern_of(text)
+    return "\\V" .. vim.fn.escape(text, "\\/")
+end
+
+-- feed() translates key notation; feed_raw() doesn't, so a "<" in the
+-- selected text isn't read as the start of a key name.
+local function feed(keys)
+    vim.api.nvim_feedkeys(vim.keycode(keys), "n", false)
+end
+local function feed_raw(text)
+    vim.api.nvim_feedkeys(text, "n", false)
+end
+
+local function find()
+    local word = selected_word(selected_lines())
+    feed("<Esc>/") -- <Esc> first: search the file, not the selection
+    if word then
+        feed_raw(pattern_of(word))
+    end
+end
+
+local function replace()
+    local lines = selected_lines()
+    local word  = selected_word(lines)
+    feed("<Esc>") -- also sets '< and '> for the range below
+
+    if word then
+        -- Pattern is filled in; land in the replacement slot
+        feed_raw(":%s/" .. pattern_of(word))
+        feed_raw("//g")
+        feed("<Left><Left>")
+    elseif lines then
+        -- Multi-line selection: substitute inside it ("find in selection")
+        feed_raw(":'<,'>s///g")
+        feed("<Left><Left><Left>")
+    else
+        feed_raw(":%s///g")
+        feed("<Left><Left><Left>")
+    end
+end
+
+map({ "n", "i", "x", "s" }, "<C-f>", find,    { desc = "Find" })
+map({ "n", "i", "x", "s" }, "<C-h>", replace, { desc = "Find and replace" })
+
+map("n",               "<F3>",   "n",      { desc = "Next match" })
+map({ "i", "x", "s" }, "<F3>",   "<esc>n", { desc = "Next match" })
+map("n",               "<S-F3>", "N",      { desc = "Previous match" })
+map({ "i", "x", "s" }, "<S-F3>", "<esc>N", { desc = "Previous match" })
+
+map("n", "<Esc>", "<cmd>nohlsearch<cr>", { desc = "Clear search highlight" })
+
 -- Close split if there are several; otherwise close the buffer
 map("n", "<C-q>", function()
     -- Only act in real code windows (not the tree, terminal, help, etc.)
