@@ -2,9 +2,9 @@
 
 A single-file Neovim config that keeps Vim underneath but puts a VSCode keymap on top:
 `Ctrl+S` saves, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` use the system clipboard, `Ctrl+Z` undoes in
-small chunks, `Shift+arrows` select, and typing over a selection replaces it. Plugins are
-managed by [lazy.nvim](https://github.com/folke/lazy.nvim) and bootstrap themselves on
-first launch.
+small chunks, `Ctrl+F`/`Ctrl+H` find and replace, `Shift+arrows` select, and typing over a
+selection replaces it. Plugins are managed by
+[lazy.nvim](https://github.com/folke/lazy.nvim) and bootstrap themselves on first launch.
 
 Highlights: gruvbox (hard contrast), lualine + bufferline, nvim-tree, telescope,
 toggleterm, treesitter (incl. folding), nvim-autopairs, gitsigns, indent-blankline, and
@@ -46,7 +46,8 @@ windows, so you can't accidentally kill them. When it closes the last code windo
 switches to another listed buffer first, so the layout survives.
 
 Terminal windows are pinned to their buffer (`winfixbuf`), so clicking a tab in the
-bufferline can't hijack the terminal split.
+bufferline can't hijack the terminal split. The terminal opens straight into insert mode
+and doesn't remember normal mode between toggles.
 
 ## Editing
 
@@ -64,12 +65,14 @@ bufferline can't hijack the terminal split.
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> | N I V S | Same as above (alternative binding) |
 
 Pasting over a selection uses visual `P`, so the clipboard is *not* replaced by whatever
-you pasted over — pasting the same text twice in a row works as expected.
+you pasted over — pasting the same text twice in a row works as expected. Insert-mode
+paste is literal (`<C-r><C-o>+`), so indented blocks don't get re-indented on the way in.
 
 Undo is chunked like VSCode's: an undo breakpoint is inserted after <kbd>Space</kbd>,
 `.`, `,`, `;` and `:`, so `Ctrl+Z` takes back a word or a clause instead of the entire
-insert session. Undo history is persistent across sessions (`undofile`), and there are no
-swap files.
+insert session. Undoing from insert mode uses `<cmd>undo<cr>`, which keeps you in insert
+mode and leaves the cursor where it was. Undo history is persistent across sessions
+(`undofile`), and there are no swap files.
 
 ## Selection and movement
 
@@ -93,6 +96,29 @@ maps `x` (visual) and `s` (select) separately everywhere instead of using `v`: i
 mode the right-hand side of a `v` mapping would be typed as literal text over your
 selection. If you want plain Visual mode from a selection, press <kbd>Ctrl</kbd>+<kbd>G</kbd>.
 
+## Find and replace
+
+| Keys | Modes | Action |
+| --- | --- | --- |
+| <kbd>Ctrl</kbd>+<kbd>F</kbd> | N I V S | Find — opens `/`, seeded with the selection |
+| <kbd>Ctrl</kbd>+<kbd>H</kbd> | N I V S | Replace — opens `:%s/…/…/g`, seeded with the selection |
+| <kbd>F3</kbd> | N I V S | Next match |
+| <kbd>Shift</kbd>+<kbd>F3</kbd> | N I V S | Previous match |
+| <kbd>Esc</kbd> | N | Clear search highlighting |
+
+Both bindings leave the current mode first, so they always act on the file rather than on
+the selection, then drop you on the command line with the cursor where you'd start
+typing; <kbd>Enter</kbd> runs it.
+
+A **single-line** selection seeds the search or replace pattern, the way VSCode fills its
+find box from the selection. The text is escaped into a `\V` ("very nomagic") pattern, so
+regex characters in it are matched literally.
+
+A **multi-line** selection means something different for <kbd>Ctrl</kbd>+<kbd>H</kbd>:
+instead of seeding a pattern, it scopes the substitution to the selected lines
+(`:'<,'>s///g`) — VSCode's "find in selection". With no selection you get a plain
+`:%s///g` over the whole file.
+
 ## Folding
 
 Folding is treesitter-based and everything starts unfolded.
@@ -102,6 +128,9 @@ Folding is treesitter-based and everything starts unfolded.
 | <kbd>Alt</kbd>+<kbd>F</kbd> | N I V | Toggle fold under the cursor |
 | <kbd>Space</kbd> <kbd>Z</kbd> <kbd>R</kbd> | N | Unfold all |
 | <kbd>Space</kbd> <kbd>Z</kbd> <kbd>M</kbd> | N | Fold all |
+
+Folded lines keep their syntax highlighting instead of being replaced by the usual dashed
+summary line.
 
 ## Completion and LSP
 
@@ -126,6 +155,9 @@ and update live while typing.
 - <kbd>Ctrl</kbd>+<kbd>/</kbd> is mapped three ways (`<C-_>`, `<C-/>`, `<Alt>+C`)
   because terminals disagree about what that key sends. If the first two don't work in
   yours, <kbd>Alt</kbd>+<kbd>C</kbd> always will.
+- Many terminals send `^H` for <kbd>Ctrl</kbd>+<kbd>Backspace</kbd>, which the
+  insert-mode half of <kbd>Ctrl</kbd>+<kbd>H</kbd> shadows. If you use
+  <kbd>Ctrl</kbd>+<kbd>Backspace</kbd> to delete a word, drop `"i"` from that mapping.
 - <kbd>Ctrl</kbd>+<kbd>3</kbd> is bound to nothing on purpose. Most terminals send it as
   a plain <kbd>Esc</kbd> and it can't be intercepted; in GUI clients and
   kitty-protocol terminals it arrives as a distinct key, and the no-op keeps behaviour
@@ -136,6 +168,9 @@ and update live while typing.
 ## Other defaults
 
 - 4-space indentation, colour column at 100
+- Line numbers, current-line highlight, 8 lines of context kept around the cursor, and a
+  permanently visible sign column so the text doesn't shift when a diagnostic appears
+- The mode indicator is left to lualine (`showmode` is off)
 - `ignorecase` + `smartcase` search
 - System clipboard shared with the unnamed register (`unnamedplus`)
 - Comment leaders are *not* auto-inserted on new lines
@@ -144,3 +179,6 @@ and update live while typing.
   better; in both cases the old C-era rule that snaps `#` to column 0 is removed, so
   typing `#` at the start of an indented Python or shell comment no longer jumps the line
   to the left margin
+- Treesitter parsers installed on first run: bash, lua, c, cpp, cmake, html, css,
+  javascript, typescript, tsx, csv, python, go, java, json
+- lazy.nvim's update checker is on, so you'll be told when plugin updates are available
