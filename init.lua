@@ -520,6 +520,16 @@ require("lazy").setup({
                 { "mason-org/mason-lspconfig.nvim", opts = {} },
             },
             config = function()
+                -- Nvim disables LSP file watching on Linux, so pyright never
+                -- hears about .py files created after it started.
+                vim.lsp.config("pyright", {
+                    capabilities = {
+                        workspace = {
+                            didChangeWatchedFiles = { dynamicRegistration = true },
+                        },
+                    },
+                })
+
                 vim.lsp.enable("pyright")
                 vim.lsp.enable("clangd")
                 vim.lsp.enable("neocmake")
