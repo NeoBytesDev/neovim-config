@@ -408,23 +408,37 @@ require("lazy").setup({
         -- ------------------------------------------------------------
         -- UI
         -- ------------------------------------------------------------
-        {
-            "ellisonleao/gruvbox.nvim",
-            priority = 1000,
-            opts = {
-                contrast = "hard",
-            },
-            config = function(_, opts)
-                require("gruvbox").setup(opts)
-                vim.cmd.colorscheme("gruvbox")
-            end,
-        },
+        -- {
+        --     "ellisonleao/gruvbox.nvim",
+        --     priority = 1000,
+        --     opts = {
+        --         contrast = "hard",
+        --     },
+        --     config = function(_, opts)
+        --         require("gruvbox").setup(opts)
+        --         vim.cmd.colorscheme("gruvbox")
+        --     end,
+        -- },
+		{
+			"navarasu/onedark.nvim",
+			priority = 1000,
+			config = function()
+				require('onedark').setup {
+					style = 'darker',
+					highlights = {
+						["@punctuation.bracket"] = { fg = "#e06c75" },
+						["@punctuation.delimiter"] = { fg = "#e06c75" },
+					}
+				}
+				require('onedark').load()
+			end
+		},
         {
             "nvim-lualine/lualine.nvim",
             dependencies = { "nvim-tree/nvim-web-devicons" },
             event = "VeryLazy",
             opts = {
-                options = { theme = "gruvbox" },
+                options = { theme = "auto" },
             },
         },
         {
@@ -433,6 +447,7 @@ require("lazy").setup({
             event = "VeryLazy",
             opts = {
                 options = {
+					indicator = { style = "none" },
                     offsets = {
                         { filetype = "NvimTree", text = "Files", separator = true },
                     },
