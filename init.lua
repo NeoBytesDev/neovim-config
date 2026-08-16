@@ -204,18 +204,19 @@ for _, key in ipairs({ "<C-_>", "<C-/>", "<A-c>" }) do
 end
 
 -- Move line / selection up and down
-for _, key in ipairs({ "<A-Up>", "<C-S-Up>" }) do
-    map("n", key, "<cmd>m .-2<cr>==",             { desc = "Move line up" })
-    map("i", key, "<esc><cmd>m .-2<cr>==gi",      { desc = "Move line up" })
-    map("x", key, ":m '<-2<cr>gv=gv",             { desc = "Move selection up" })
-    map("s", key, keep_select(":m '<lt>-2<cr>gv=gv"), { desc = "Move selection up" })
-end
-for _, key in ipairs({ "<A-Down>", "<C-S-Down>" }) do
-    map("n", key, "<cmd>m .+1<cr>==",             { desc = "Move line down" })
-    map("i", key, "<esc><cmd>m .+1<cr>==gi",      { desc = "Move line down" })
-    map("x", key, ":m '>+1<cr>gv=gv",             { desc = "Move selection down" })
-    map("s", key, keep_select(":m '>+1<cr>gv=gv"), { desc = "Move selection down" })
-end
+-- <A-Up>/<A-Down> used to do this too; they now add cursors (see the
+-- multicursor plugin below), so moving lines is Ctrl+Shift+Arrow only.
+-- Note that <C-S-Up> needs a GUI or a kitty-protocol terminal to arrive as
+-- its own key -- plain terminals send the same bytes as <Up>.
+map("n", "<C-S-Up>", "<cmd>m .-2<cr>==",                      { desc = "Move line up" })
+map("i", "<C-S-Up>", "<esc><cmd>m .-2<cr>==gi",               { desc = "Move line up" })
+map("x", "<C-S-Up>", ":m '<-2<cr>gv=gv",                      { desc = "Move selection up" })
+map("s", "<C-S-Up>", keep_select(":m '<lt>-2<cr>gv=gv"),      { desc = "Move selection up" })
+
+map("n", "<C-S-Down>", "<cmd>m .+1<cr>==",                    { desc = "Move line down" })
+map("i", "<C-S-Down>", "<esc><cmd>m .+1<cr>==gi",             { desc = "Move line down" })
+map("x", "<C-S-Down>", ":m '>+1<cr>gv=gv",                    { desc = "Move selection down" })
+map("s", "<C-S-Down>", keep_select(":m '>+1<cr>gv=gv"),       { desc = "Move selection down" })
 
 -- Splits
 map("n", "<leader>v", "<cmd>vsplit<cr>", { desc = "Vertical split" })
@@ -251,6 +252,38 @@ map({ "n", "x", "i" }, "<C-Left>",  function() word_move("left")  end, { desc = 
 map({ "n", "x", "i" }, "<C-Right>", function() word_move("right") end, { desc = "Word right" })
 
 -- ------------------------------------------------------------------
+-- Word-wise deletion (VSCode style)
+-- ------------------------------------------------------------------
+-- Insert mode's built-in <C-w> already deletes back to the start of the
+-- previous word, whitespace included -- the same span VSCode removes.
+-- <C-g>u in front makes each deletion its own undo step.
+--
+-- Which key actually arrives depends on the terminal: GUIs and
+-- kitty-protocol terminals send <C-BS>, but most terminals send ^H
+-- (= <C-h>), which stays mapped to find-and-replace below. On those,
+-- reach for the built-in <C-w> instead -- same deletion, minus the
+-- undo-step split.
+map("i", "<C-BS>", "<C-g>u<C-w>", { desc = "Delete word left" })
+
+-- Ctrl+Delete, the other half of the pair. <C-o> at the very end of a
+-- line nudges the cursor one left, which would make dw eat the last
+-- character, so bail out when there's nothing to the right.
+local function delete_word_right()
+    local col = vim.api.nvim_win_get_cursor(0)[2]
+    if col >= #vim.api.nvim_get_current_line() then
+        return
+    end
+    vim.api.nvim_feedkeys(vim.keycode("<C-g>u<C-o>dw"), "n", false)
+end
+
+map("i", "<C-Del>", delete_word_right, { desc = "Delete word right" })
+
+-- Normal mode has no VSCode equivalent to copy, but the same span is
+-- useful there; "_ keeps the deletion out of the clipboard.
+map("n", "<C-BS>", '"_db',  { desc = "Delete word left" })
+map("n", "<C-Del>", '"_dw', { desc = "Delete word right" })
+
+-- ------------------------------------------------------------------
 -- Find / Replace (VSCode style)
 -- ------------------------------------------------------------------
 -- <C-f> and <C-h> open the command line seeded with the selection, with
@@ -259,6 +292,15 @@ map({ "n", "x", "i" }, "<C-Right>", function() word_move("right") end, { desc = 
 --
 -- Note: many terminals send ^H for Ctrl+Backspace, so the insert-mode
 -- half of <C-h> shadows it. Drop "i" from that map if you use it.
+--
+-- Patterns are seeded with flags so only what you actually typed or
+-- selected counts as a match:
+--   \V     every character is literal -- "a.b" won't match "axb"
+--   \C     case-sensitive, whatever 'ignorecase' and 'smartcase' say
+--   \< \>  word boundaries -- "cat" won't match inside "concatenate"
+-- Set this to false for substring matching, or delete the flags from the
+-- command line before pressing <cr> to loosen a single search.
+local exact_match = true
 
 -- Select mode has its own mode letters; getregion() only knows Visual's.
 local visual_kind = {
@@ -285,10 +327,30 @@ local function selected_word(lines)
     end
 end
 
+-- Does 'iskeyword' count this character as part of a word?
+local function is_keyword(char)
+    return char ~= "" and vim.fn.match(char, "\\k") == 0
+end
+
 -- Escape for use as a \V ("very nomagic") pattern, where only the
--- backslash and the / delimiter still mean anything.
+-- backslash and the / delimiter still mean anything, and wrap it in the
+-- flags described above.
 local function pattern_of(text)
-    return "\\V" .. vim.fn.escape(text, "\\/")
+    local prefix = "\\V\\C"
+    local suffix = ""
+
+    -- \< and \> only match next to a keyword character, so a selection
+    -- like "foo(" gets a boundary on the "f" side and not the other.
+    if exact_match then
+        if is_keyword(vim.fn.strcharpart(text, 0, 1)) then
+            prefix = prefix .. "\\<"
+        end
+        if is_keyword(vim.fn.strcharpart(text, vim.fn.strchars(text) - 1, 1)) then
+            suffix = "\\>"
+        end
+    end
+
+    return prefix .. vim.fn.escape(text, "\\/") .. suffix
 end
 
 -- feed() translates key notation; feed_raw() doesn't, so a "<" in the
@@ -300,12 +362,15 @@ local function feed_raw(text)
     vim.api.nvim_feedkeys(text, "n", false)
 end
 
+-- Nothing selected: seed the flags anyway, so what you type by hand is
+-- taken literally too. Word boundaries can't go here -- you'd have to
+-- type between them.
+local flags = "\\V\\C"
+
 local function find()
     local word = selected_word(selected_lines())
     feed("<Esc>/") -- <Esc> first: search the file, not the selection
-    if word then
-        feed_raw(pattern_of(word))
-    end
+    feed_raw(word and pattern_of(word) or flags)
 end
 
 local function replace()
@@ -320,10 +385,10 @@ local function replace()
         feed("<Left><Left>")
     elseif lines then
         -- Multi-line selection: substitute inside it ("find in selection")
-        feed_raw(":'<,'>s///g")
+        feed_raw(":'<,'>s/" .. flags .. "//g")
         feed("<Left><Left><Left>")
     else
-        feed_raw(":%s///g")
+        feed_raw(":%s/" .. flags .. "//g")
         feed("<Left><Left><Left>")
     end
 end
@@ -419,20 +484,20 @@ require("lazy").setup({
         --         vim.cmd.colorscheme("gruvbox")
         --     end,
         -- },
-		{
-			"navarasu/onedark.nvim",
-			priority = 1000,
-			config = function()
-				require('onedark').setup {
-					style = 'darker',
-					highlights = {
-						["@punctuation.bracket"] = { fg = "#e06c75" },
-						["@punctuation.delimiter"] = { fg = "#e06c75" },
-					}
-				}
-				require('onedark').load()
-			end
-		},
+        {
+            "navarasu/onedark.nvim",
+            priority = 1000,
+            config = function()
+                require("onedark").setup({
+                    style = "darker",
+                    highlights = {
+                        ["@punctuation.bracket"] = { fg = "#e06c75" },
+                        ["@punctuation.delimiter"] = { fg = "#e06c75" },
+                    },
+                })
+                require("onedark").load()
+            end,
+        },
         {
             "nvim-lualine/lualine.nvim",
             dependencies = { "nvim-tree/nvim-web-devicons" },
@@ -447,7 +512,7 @@ require("lazy").setup({
             event = "VeryLazy",
             opts = {
                 options = {
-					indicator = { style = "none" },
+                    indicator = { style = "none" },
                     offsets = {
                         { filetype = "NvimTree", text = "Files", separator = true },
                     },
@@ -523,6 +588,104 @@ require("lazy").setup({
             "windwp/nvim-autopairs",
             event = "InsertEnter",
             opts = {},
+        },
+
+        -- Multiple cursors (VSCode style)
+        {
+            "jake-stewart/multicursor.nvim",
+            branch = "1.0",
+            event = "VeryLazy",
+            config = function()
+                local mc = require("multicursor-nvim")
+                mc.setup()
+
+                -- Add a cursor on the line above/below, keeping the column.
+                local function add_cursor(dir)
+                    return function()
+                        mc.lineAddCursor(dir)
+                    end
+                end
+
+                -- Same thing from insert mode, which has to leave insert,
+                -- add the cursor, then come back.
+                --
+                -- This must not be done with nvim_feedkeys(..., "x"): "x"
+                -- means "run these keys now, until the typeahead is empty",
+                -- and entering insert mode never empties it -- it sits there
+                -- waiting for input. The call blocks inside the callback,
+                -- swallows what you type, and leaves the buffer in insert
+                -- mode while lualine still says normal.
+                --
+                -- An <expr> mapping sidesteps all of it: the keys are handed
+                -- back to Nvim and run in order, exactly as if typed.
+                local function add_cursor_insert(dir)
+                    return function()
+                        -- <Esc> lands one character to the left, so "a"
+                        -- (append after it) is what puts us back where we
+                        -- were -- except in column 0, where there's nothing
+                        -- to the left and "i" is the one.
+                        local back = vim.api.nvim_win_get_cursor(0)[2] == 0 and "i" or "a"
+                        return ("<Esc><Cmd>lua require('multicursor-nvim').lineAddCursor(%d)<CR>%s")
+                            :format(dir, back)
+                    end
+                end
+
+                local expr = { expr = true, replace_keycodes = true }
+
+                map({ "n", "x" }, "<A-Up>",   add_cursor(-1), { desc = "Add cursor above" })
+                map({ "n", "x" }, "<A-Down>", add_cursor(1),  { desc = "Add cursor below" })
+                map("i", "<A-Up>", add_cursor_insert(-1),
+                    vim.tbl_extend("force", expr, { desc = "Add cursor above" }))
+                map("i", "<A-Down>", add_cursor_insert(1),
+                    vim.tbl_extend("force", expr, { desc = "Add cursor below" }))
+
+                -- Ctrl+D: cursor at the next occurrence of the word under the
+                -- cursor / the selection. (Shadows the half-page scroll.)
+                map({ "n", "x" }, "<C-d>", function() mc.matchAddCursor(1) end,
+                    { desc = "Add cursor at next match" })
+                map({ "n", "x" }, "<A-d>", function() mc.matchSkipCursor(1) end,
+                    { desc = "Skip to next match" })
+
+                -- Only active while extra cursors exist, so this <Esc> takes
+                -- priority over the nohlsearch one until they're gone.
+                mc.addKeymapLayer(function(layer)
+                    layer({ "n", "x" }, "<Esc>", function()
+                        if mc.cursorsEnabled() then
+                            mc.clearCursors()
+                        else
+                            mc.enableCursors()
+                        end
+                    end, { desc = "Clear extra cursors" })
+                end)
+
+                local hl = vim.api.nvim_set_hl
+                hl(0, "MultiCursorCursor",         { reverse = true })
+                hl(0, "MultiCursorVisual",         { link = "Visual" })
+                hl(0, "MultiCursorSign",           { link = "SignColumn" })
+                hl(0, "MultiCursorMatchPreview",   { link = "Search" })
+                hl(0, "MultiCursorDisabledCursor", { link = "Visual" })
+                hl(0, "MultiCursorDisabledVisual", { link = "Visual" })
+                hl(0, "MultiCursorDisabledSign",   { link = "SignColumn" })
+            end,
+        },
+
+        -- TODO / FIXME / HACK highlighting (needs ripgrep for the pickers)
+        {
+            "folke/todo-comments.nvim",
+            dependencies = { "nvim-lua/plenary.nvim" },
+            event = { "BufReadPost", "BufNewFile" },
+            keys = {
+                { "<leader>ft", "<cmd>TodoTelescope<cr>", desc = "Find TODOs" },
+                { "]t", function() require("todo-comments").jump_next() end, desc = "Next TODO" },
+                { "[t", function() require("todo-comments").jump_prev() end, desc = "Previous TODO" },
+            },
+            opts = {
+                signs = false, -- gitsigns already owns the gutter
+                -- The default patterns require the colon: "TODO" stays plain
+                -- text and lights up the moment you type "TODO:". The plugin
+                -- re-highlights from nvim_buf_attach's on_lines, which fires
+                -- on every keystroke, so the color appears as you type.
+            },
         },
 
         -- ------------------------------------------------------------
