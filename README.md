@@ -258,6 +258,38 @@ and closes itself when you leave them or move to another line.
 Diagnostics are shown as virtual text at the end of the line, sorted with errors first,
 and update live while typing.
 
+### Turning the LSP off
+
+Sometimes you just want a quiet buffer — no popups, no virtual text, no server chewing
+through a large file.
+
+| Command | Action |
+| --- | --- |
+| `:LspDisable` | Stop the servers, hide diagnostics, silence the completion popup |
+| `:LspEnable` | Bring all three back |
+| `:LspToggle` | Flip between the two |
+
+User commands have to start with a capital letter, so lowercase abbreviations are set up
+for all three: typing `:lspdisable` expands to `:LspDisable` as you hit space or
+<kbd>Enter</kbd>. The abbreviation only fires when the word is alone on the command line,
+so it won't mangle a `:s` pattern that happens to contain it.
+
+The state lives in `vim.g.lsp_enabled`, which `blink.cmp` re-checks on every trigger — no
+restart needed for the popup to go quiet or come back. Servers come from the
+`lsp_servers` list at the top of the *LSP / completion toggle* section; that same list is
+what gets enabled at startup, so adding a server there covers both.
+
+Two notes on the implementation:
+
+- Neovim ships `:LspStart` / `:LspStop` / `:LspRestart` in core, but those only stop the
+  running clients and leave the config enabled — opening the next Python file starts
+  `pyright` right back up. `:LspDisable` flips the config itself off, so it stays off.
+- `lsp_signature` doesn't survive the round trip on its own: stopping the clients tears
+  down its per-buffer autocmds and re-attaching doesn't fully restore it. `:LspEnable`
+  fires a `User LspReEnabled` autocmd, which the plugin's config uses to re-run `setup()`
+  before anything attaches. If you add another plugin that hooks the LSP and goes quiet
+  after a toggle, hang it off that same event.
+
 ## Terminal quirks worth knowing
 
 - <kbd>Ctrl</kbd>+<kbd>/</kbd> is mapped three ways (`<C-_>`, `<C-/>`, `<Alt>+C`)
