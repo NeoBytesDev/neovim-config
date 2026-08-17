@@ -447,6 +447,56 @@ map("n", "<C-q>", function()
 end, { desc = "Close split / buffer" })
 
 -- ========================================================================
+-- LSP / completion toggle
+-- ========================================================================
+-- :LspDisable stops the language servers, hides diagnostics and turns off
+-- the completion popup; :LspEnable brings all three back. User commands
+-- have to start with a capital letter, so lowercase abbreviations are set
+-- up below -- typing ":lspdisable" expands to the real name.
+--
+-- This list is also what the lspconfig block enables at startup.
+local lsp_servers = { "pyright", "clangd", "neocmake" }
+
+local function lsp_set(on)
+    vim.g.lsp_enabled = on
+
+    for _, name in ipairs(lsp_servers) do
+        vim.lsp.enable(name, on)
+    end
+
+    if on then
+        -- vim.lsp.enable() attaches on FileType; buffers already open have
+        -- had theirs, so fire it again for them.
+        for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+            if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].buftype == "" then
+                vim.api.nvim_exec_autocmds("FileType", { buffer = buf })
+            end
+        end
+    else
+        -- Disabling a config doesn't stop clients that are already running.
+        for _, client in ipairs(vim.lsp.get_clients()) do
+            client:stop()
+        end
+        pcall(function() require("blink.cmp").hide() end)
+    end
+
+    vim.diagnostic.enable(on)
+    vim.notify("LSP " .. (on and "enabled" or "disabled"))
+end
+
+vim.api.nvim_create_user_command("LspEnable",  function() lsp_set(true)  end, {})
+vim.api.nvim_create_user_command("LspDisable", function() lsp_set(false) end, {})
+vim.api.nvim_create_user_command("LspToggle",  function() lsp_set(vim.g.lsp_enabled == false) end, {})
+
+-- Type them lowercase: ':lspdisable' expands to ':LspDisable' as you hit
+-- space or <cr>. The guard keeps the word from expanding mid-line (e.g.
+-- inside a :s pattern).
+for _, name in ipairs({ "LspEnable", "LspDisable", "LspToggle" }) do
+    vim.cmd(("cnoreabbrev <expr> %s (getcmdtype() == ':' && getcmdline() ==# '%s') ? '%s' : '%s'")
+        :format(name:lower(), name:lower(), name, name:lower()))
+end
+
+-- ========================================================================
 -- Bootstrap lazy.nvim
 -- ========================================================================
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
@@ -708,9 +758,11 @@ require("lazy").setup({
                     },
                 })
 
-                vim.lsp.enable("pyright")
-                vim.lsp.enable("clangd")
-                vim.lsp.enable("neocmake")
+                -- Same list :LspEnable / :LspDisable work from.
+                for _, name in ipairs(lsp_servers) do
+                    vim.lsp.enable(name)
+                end
+                vim.g.lsp_enabled = true
             end,
         },
         {
@@ -718,6 +770,9 @@ require("lazy").setup({
             version = "1.*",
             dependencies = { "rafamadriz/friendly-snippets" },
             opts = {
+                -- Re-checked on every trigger, so :LspDisable silences the
+                -- popup without a restart.
+                enabled = function() return vim.g.lsp_enabled ~= false end,
                 keymap = { preset = "enter" },
                 completion = {
                     documentation = { auto_show = true },
