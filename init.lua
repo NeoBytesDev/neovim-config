@@ -223,6 +223,60 @@ map("n", "<leader>v", "<cmd>vsplit<cr>", { desc = "Vertical split" })
 map("n", "<leader>h", "<cmd>split<cr>",  { desc = "Horizontal split" })
 
 -- ------------------------------------------------------------------
+-- Buffer tabs (Firefox style)
+-- ------------------------------------------------------------------
+-- <leader>1 .. <leader>9 jump to the Nth tab in the bufferline, in the
+-- order it's drawn; <leader>0 goes to the last one, however many there
+-- are. Normal mode only, so Space stays a plain space everywhere else.
+--
+-- Splits are untouched: bufferline swaps the buffer shown in the *current*
+-- window and never opens, closes or focuses another one.
+--
+-- Windows that are pinned to their buffer ('winfixbuf': terminals, and by
+-- extension anything the TermOpen autocmd above touched) can't be switched
+-- at all, and neither can the tree -- pressing the key there would just
+-- throw. Hop to the first real code window and switch that one instead,
+-- which is what clicking a tab does anyway.
+local function is_code_win(win)
+    local buf = vim.api.nvim_win_get_buf(win)
+    return vim.api.nvim_win_get_config(win).relative == ""
+        and not vim.wo[win].winfixbuf
+        and vim.bo[buf].buftype == ""
+        and vim.bo[buf].filetype ~= "NvimTree"
+end
+
+local function goto_tab(n)
+    return function()
+        if not is_code_win(0) then
+            local target
+            for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+                if is_code_win(w) then
+                    target = w
+                    break
+                end
+            end
+            if not target then
+                return -- nothing but terminals / the tree open
+            end
+            vim.api.nvim_set_current_win(target)
+        end
+
+        -- Second argument: treat n as a position in the tabline rather
+        -- than an ordinal buffer number, so it matches what you see.
+        -- -1 is "the last tab".
+        local ok, bufferline = pcall(require, "bufferline")
+        if ok then
+            bufferline.go_to(n, true)
+        end
+    end
+end
+
+for i = 1, 9 do
+    map("n", "<leader>" .. i, goto_tab(i), { desc = "Go to tab " .. i })
+end
+map("n", "<leader>0", goto_tab(-1), { desc = "Go to last tab" })
+
+-- ------------------------------------------------------------------
 -- Word-wise movement (VSCode style)
 -- ------------------------------------------------------------------
 -- Like w/b, but never crosses a line boundary: past the last word the
@@ -563,6 +617,10 @@ require("lazy").setup({
             opts = {
                 options = {
                     indicator = { style = "none" },
+                    -- Draw the position of each tab, so <leader>N has a
+                    -- number to aim at. "ordinal" is the slot in the
+                    -- tabline, which is exactly what goto_tab() counts.
+                    numbers = "ordinal",
                     offsets = {
                         { filetype = "NvimTree", text = "Files", separator = true },
                     },
