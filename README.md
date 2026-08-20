@@ -3,9 +3,10 @@
 A single-file Neovim config that keeps Vim underneath but puts a VSCode keymap on top:
 `Ctrl+S` saves, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` use the system clipboard, `Ctrl+Z` undoes in
 small chunks, `Ctrl+F`/`Ctrl+H` find and replace, `Ctrl+Backspace` deletes a word,
-`Alt+↑`/`Alt+↓` stack multiple cursors, `Shift+arrows` select, and typing over a
-selection replaces it. Plugins are managed by
-[lazy.nvim](https://github.com/folke/lazy.nvim) and bootstrap themselves on first launch.
+`Alt+↑`/`Alt+↓` stack multiple cursors, `Shift+arrows` select, typing over a selection
+replaces it, and — Firefox style — `Space`+a number jumps straight to that file tab.
+Plugins are managed by [lazy.nvim](https://github.com/folke/lazy.nvim) and bootstrap
+themselves on first launch.
 
 Highlights: onedark (darker), lualine + bufferline, nvim-tree, telescope, toggleterm,
 treesitter (incl. folding), multicursor, todo-comments, nvim-autopairs, gitsigns,
@@ -35,6 +36,8 @@ mode you are in.
 | <kbd>Ctrl</kbd>+<kbd>S</kbd> | N I V S | Save file (drops back to normal mode) |
 | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | N | Close split; if it's the last one, close the buffer |
 | <kbd>Space</kbd> <kbd>Q</kbd> | N | Quit Neovim (prompts about unsaved files) |
+| <kbd>Space</kbd> <kbd>1</kbd> … <kbd>9</kbd> | N | Jump to the 1st … 9th file tab |
+| <kbd>Space</kbd> <kbd>0</kbd> | N | Jump to the last file tab |
 | <kbd>Space</kbd> <kbd>V</kbd> | N | Vertical split |
 | <kbd>Space</kbd> <kbd>H</kbd> | N | Horizontal split |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | N | Find files (telescope) |
@@ -49,6 +52,27 @@ switches to another listed buffer first, so the layout survives.
 Terminal windows are pinned to their buffer (`winfixbuf`), so clicking a tab in the
 bufferline can't hijack the terminal split. The terminal opens straight into insert mode
 and doesn't remember normal mode between toggles.
+
+### Tab switching
+
+<kbd>Space</kbd>+number counts **positions in the tabline**, not buffer numbers, so
+<kbd>Space</kbd> <kbd>3</kbd> always lands on the third tab you can see, however the
+underlying buffers are numbered. <kbd>Space</kbd> <kbd>0</kbd> is the last tab whatever
+its position, the way <kbd>Alt</kbd>+<kbd>9</kbd> works in Firefox. Bufferline is
+configured with `numbers = "ordinal"` so each tab shows the number you'd press; drop that
+line from its `opts` if you'd rather keep the tabline clean.
+
+Splits are left alone. Switching swaps the buffer shown in the **current window** only —
+the layout, the other split's contents and the focus all stay where they were, so
+<kbd>Space</kbd> <kbd>2</kbd> in a vertical split changes that half and nothing else.
+
+The one special case is windows that can't change buffer: terminals (pinned with
+`winfixbuf`) and the file tree. Pressing the key there would otherwise throw, so it
+switches the first real code window instead — the same thing that happens when you click
+a tab from the terminal. If nothing but terminals and the tree are open, it does nothing.
+
+The bindings are normal mode only, so <kbd>Space</kbd> stays a plain space while you're
+typing.
 
 ## Editing
 
@@ -309,6 +333,9 @@ Two notes on the implementation:
   consistent.
 - <kbd>Alt</kbd>+arrow bindings need a terminal that passes Alt through (or a GUI
   client). Most do.
+- Tab switching is on <kbd>Space</kbd>+number rather than <kbd>Alt</kbd>+number for the
+  same reason: it's a leader sequence, so it works everywhere without depending on what
+  the terminal does with Alt.
 
 ## Other defaults
 
@@ -317,6 +344,8 @@ Two notes on the implementation:
   gruvbox block is left commented out in the config if you want to switch back
 - Line numbers, current-line highlight, 8 lines of context kept around the cursor, and a
   permanently visible sign column so the text doesn't shift when a diagnostic appears
+- Bufferline numbers its tabs by position (`numbers = "ordinal"`) to match the
+  <kbd>Space</kbd>+number bindings
 - The mode indicator is left to lualine (`showmode` is off)
 - `ignorecase` + `smartcase` search (find and replace override this with `\C`)
 - System clipboard shared with the unnamed register (`unnamedplus`)
