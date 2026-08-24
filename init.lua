@@ -101,6 +101,11 @@ local map = vim.keymap.set
 -- Run a Visual-mode command on a Select-mode selection, then return to
 -- Select mode. <C-g> toggles Select <-> Visual; where a command leaves us
 -- varies, so check the mode afterwards and only flip back if needed.
+--
+-- Only safe for commands that end in Normal mode (":" commands, mostly).
+-- An *operator* like ">" hands Select mode back when it's done, so any
+-- keys after it get typed over the selection as text -- see
+-- shift_selection() below for how to handle those.
 local function keep_select(keys, remap)
     return function()
         vim.api.nvim_feedkeys(vim.keycode("<C-g>" .. keys), (remap and "m" or "n") .. "x", false)
@@ -132,10 +137,35 @@ map("n", "<leader>q", "<cmd>confirm qa<cr>", { desc = "Quit nvim" })
 map("n", "<Tab>",   ">>",    { desc = "Indent line" })
 map("n", "<S-Tab>", "<<",    { desc = "Dedent line" })
 map("i", "<S-Tab>", "<C-d>", { desc = "Dedent line" })
-map("x", "<Tab>",   ">gv",   { desc = "Indent selection" })
-map("x", "<S-Tab>", "<gv",   { desc = "Dedent selection" })
-map("s", "<Tab>",   keep_select(">gv"),      { desc = "Indent selection" })
-map("s", "<S-Tab>", keep_select("<lt>gv"),   { desc = "Dedent selection" })
+
+-- Feeding ">gv" as keys is unsafe from Select mode: the ">" operator hands
+-- Select mode back when it's done, so the trailing "gv" is typed over the
+-- selection as text instead of reselecting it. Drop the selection first
+-- (which sets '< and '>), shift the range with the Ex command, then
+-- reselect from Normal mode -- no key ever runs in a mode that could take
+-- it as input. Visual and Select share the path, so they can't drift.
+local function shift_selection(dir)
+    return function()
+        local select = vim.api.nvim_get_mode().mode:find("^[sS\19]") ~= nil
+        local shift  = string.rep(dir, vim.v.count1) -- 3<Tab> = three levels
+
+        vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "nx", false)
+        vim.cmd("silent '<,'>" .. shift)
+        vim.cmd("normal! gv")
+
+        -- gv comes back in whichever mode the selection was made in;
+        -- flip only if that isn't the one we started from.
+        local mode = vim.api.nvim_get_mode().mode
+        local now_select = mode:find("^[sS\19]") ~= nil
+        local now_visual = mode:find("^[vV\22]") ~= nil
+        if (now_select or now_visual) and now_select ~= select then
+            vim.api.nvim_feedkeys(vim.keycode("<C-g>"), "nx", false)
+        end
+    end
+end
+
+map({ "x", "s" }, "<Tab>",   shift_selection(">"), { desc = "Indent selection" })
+map({ "x", "s" }, "<S-Tab>", shift_selection("<"), { desc = "Dedent selection" })
 
 -- Select all
 map({ "n", "i", "x", "s" }, "<C-a>", "<esc>gg0vG$<C-g>", { desc = "Select all" })
