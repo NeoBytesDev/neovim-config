@@ -539,7 +539,11 @@ end, { desc = "Close split / buffer" })
 -- up below -- typing ":lspdisable" expands to the real name.
 --
 -- This list is also what the lspconfig block enables at startup.
-local lsp_servers = { "pyright", "clangd", "neocmake" }
+--
+-- gopls belongs here even though it starts fine without it: mason-lspconfig
+-- auto-enables whatever Mason has installed, so Go worked, but :LspDisable
+-- only walks this list and would have left gopls running.
+local lsp_servers = { "pyright", "clangd", "neocmake", "gopls" }
 
 local function lsp_set(on)
     vim.g.lsp_enabled = on
@@ -718,7 +722,7 @@ require("lazy").setup({
                 require("nvim-treesitter").install({
                     "bash", "lua", "cpp", "c", "cmake", "html", "css",
                     "javascript", "typescript", "tsx", "csv",
-                    "python", "go", "java", "json",
+                    "python", "go", "gomod", "gowork", "java", "json",
                 })
             end,
         },
@@ -836,9 +840,19 @@ require("lazy").setup({
                 { "mason-org/mason-lspconfig.nvim", opts = {} },
             },
             config = function()
-                -- Nvim disables LSP file watching on Linux, so pyright never
-                -- hears about .py files created after it started.
-                vim.lsp.config("pyright", {
+                -- Nvim leaves LSP file watching off on Linux (inotify runs
+                -- out of watches on big trees), which means a server never
+                -- hears about files that appear after it started. The buffer
+                -- itself still attaches -- what's missing is the *project*
+                -- view: gopls keeps the package list it built at startup, so
+                -- a brand new .go file isn't part of any package and nothing
+                -- in it shows up in completions until nvim is restarted.
+                -- Pyright has the same problem with new .py files.
+                --
+                -- "*" is the config every server inherits, so this also
+                -- covers the ones mason-lspconfig enables on its own rather
+                -- than only the ones named in lsp_servers.
+                vim.lsp.config("*", {
                     capabilities = {
                         workspace = {
                             didChangeWatchedFiles = { dynamicRegistration = true },
