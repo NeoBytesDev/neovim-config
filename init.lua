@@ -972,13 +972,27 @@ require("lazy").setup({
             },
             opts = {
                 signs = false, -- gitsigns already owns the gutter
-                -- The default patterns require a colon ("TODO:"). These
-                -- drop it, so a bare "TODO" lights up too. The trailing
-                -- word boundary (> in Vim regex, \b in ripgrep) keeps
-                -- e.g. "NOTEBOOK" from matching NOTE. Only comments are
-                -- checked, so "todo" in code stays plain.
+                -- A keyword only counts when it's the first thing in the
+                -- comment: the comment symbol, optional spaces, then the
+                -- keyword as a whole word. So "// TODO: abc", "// TODO abc",
+                -- "# NOTE", "-- FIXME" and "x = 1 // TODO" match, but
+                -- "// some TODO", "// NOTEBOOK" and "// MY_TODO" don't.
+                --
+                -- Comment symbols covered: // /// (C, C++, Go, Java, JS),
+                -- # (Python, bash, CMake), -- --- (Lua), /* and a leading
+                -- " * " inside block comments, <!-- (HTML, Markdown).
                 highlight = {
-                    pattern = [[.*<(KEYWORDS)>]], -- Vim regex (very magic)
+                    -- Vim regex (very magic): \* and \< are a literal * and <
+                    pattern = [[.*%(//+|#+|--+|/\*+|^\s*\*|\<!--)\s*(KEYWORDS)%(\W|$)]],
+                    -- Color just the keyword. The default "wide" pads it with
+                    -- one character on each side, which crashes when the
+                    -- keyword is the last thing on the line (e.g. while typing
+                    -- "// TODO").
+                    keyword = "bg",
+                },
+                search = {
+                    -- Same rule in ripgrep syntax, for ]t [t and the picker
+                    pattern = [[(?://+|#+|--+|/\*+|^\s*\*|<!--)\s*\b(KEYWORDS)\b]],
                 },
                 search = {
                     pattern = [[\b(KEYWORDS)\b]], -- ripgrep regex, for ]t [t and the picker
