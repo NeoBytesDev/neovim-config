@@ -84,6 +84,16 @@ vim.api.nvim_create_autocmd("TermOpen", {
     end,
 })
 
+-- Haskell: spaces only (GHC counts a tab as 8 columns and warns about them)
+vim.api.nvim_create_autocmd("FileType", {
+    pattern = { "haskell", "cabal" },
+    callback = function()
+        vim.opt_local.expandtab = true
+        vim.opt_local.shiftwidth = 4
+        vim.opt_local.softtabstop = 4
+    end,
+})
+
 -- ========================================================================
 -- Diagnostics
 -- ========================================================================
@@ -692,7 +702,7 @@ end, { desc = "Close split / buffer" })
 -- gopls belongs here even though it starts fine without it: mason-lspconfig
 -- auto-enables whatever Mason has installed, so Go worked, but :LspDisable
 -- only walks this list and would have left gopls running.
-local lsp_servers = { "pyright", "clangd", "neocmake", "gopls" }
+local lsp_servers = { "pyright", "clangd", "neocmake", "gopls", "hls" }
 
 local function lsp_set(on)
     vim.g.lsp_enabled = on
