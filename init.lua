@@ -1093,6 +1093,26 @@ require("lazy").setup({
                 })
             end,
         },
+		-- Markdown preview in the browser (live reload + scroll sync)
+        -- <leader>mp toggles it, in markdown files only. Ctrl+Shift+V
+        -- (VSCode's key) is left alone: most terminals take it for paste.
+        {
+            "iamcco/markdown-preview.nvim",
+            cmd = { "MarkdownPreview", "MarkdownPreviewStop", "MarkdownPreviewToggle" },
+            ft = { "markdown" },
+            -- Downloads a prebuilt binary, so Node/yarn aren't needed.
+            build = function() vim.fn["mkdp#util#install"]() end,
+            init = function()
+                vim.g.mkdp_filetypes = { "markdown" }
+                vim.g.mkdp_theme = "dark"   -- match the editor
+                vim.g.mkdp_auto_close = 1   -- close the tab when you leave the buffer
+                vim.g.mkdp_echo_preview_url = 1 -- print the URL, handy if no browser opens
+            end,
+            keys = {
+                { "<leader>mp", "<cmd>MarkdownPreviewToggle<cr>", ft = "markdown",
+                  desc = "Toggle markdown preview" },
+            },
+        },
     },
     checker = { enabled = true },
 })
