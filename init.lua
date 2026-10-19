@@ -17,6 +17,9 @@ vim.opt.signcolumn = "yes"      -- stable gutter (no shifting when signs appear)
 -- Behavior
 vim.opt.keymodel = "startsel,stopsel" -- Shift+Home/End/PgUp/PgDn/arrows select
 vim.opt.selectmode = "key"            -- ...into Select mode: typing replaces it
+vim.opt.selection = "exclusive"       -- the char under the cursor isn't selected
+                                      -- (VSCode style: Ctrl+Shift+Right on
+                                      -- "foo bar" selects "foo ", not "foo b")
 vim.opt.clipboard = "unnamedplus"     -- share clipboard with the system
 vim.opt.undofile = true               -- persistent undo across sessions
 vim.opt.ignorecase = true             -- case-insensitive search...
@@ -98,22 +101,12 @@ vim.diagnostic.config({
 -- over the selection instead of running as a command.)
 local map = vim.keymap.set
 
--- Run a Visual-mode command on a Select-mode selection, then return to
--- Select mode. <C-g> toggles Select <-> Visual; where a command leaves us
--- varies, so check the mode afterwards and only flip back if needed.
---
--- Only safe for commands that end in Normal mode (":" commands, mostly).
--- An *operator* like ">" hands Select mode back when it's done, so any
--- keys after it get typed over the selection as text -- see
--- shift_selection() below for how to handle those.
-local function keep_select(keys, remap)
-    return function()
-        vim.api.nvim_feedkeys(vim.keycode("<C-g>" .. keys), (remap and "m" or "n") .. "x", false)
-        if vim.api.nvim_get_mode().mode:find("^[vV\22]") then
-            vim.api.nvim_feedkeys(vim.keycode("<C-g>"), "nx", false)
-        end
-    end
-end
+-- Select mode has its own mode letters; getregion() and friends only know
+-- Visual's. Maps either kind to the Visual letter.
+local visual_kind = {
+    v = "v", V = "V", ["\22"] = "\22", -- Visual, line, block
+    s = "v", S = "V", ["\19"] = "\22", -- the Select equivalents
+}
 
 -- Ctrl+3 sends the terminal's ^[ (plain <Esc>) and can't be intercepted
 -- there. In GUIs / kitty-protocol terminals it arrives as its own key.
@@ -233,20 +226,95 @@ for _, key in ipairs({ "<C-_>", "<C-/>", "<A-c>" }) do
     map({ "n", "i", "x", "s" }, key, toggle_comment, { desc = "Toggle comment" })
 end
 
+-- ------------------------------------------------------------------
 -- Move line / selection up and down
+-- ------------------------------------------------------------------
 -- <A-Up>/<A-Down> used to do this too; they now add cursors (see the
 -- multicursor plugin below), so moving lines is Ctrl+Shift+Arrow only.
 -- Note that <C-S-Up> needs a GUI or a kitty-protocol terminal to arrive as
 -- its own key -- plain terminals send the same bytes as <Up>.
-map("n", "<C-S-Up>", "<cmd>m .-2<cr>==",                      { desc = "Move line up" })
-map("i", "<C-S-Up>", "<esc><cmd>m .-2<cr>==gi",               { desc = "Move line up" })
-map("x", "<C-S-Up>", ":m '<-2<cr>gv=gv",                      { desc = "Move selection up" })
-map("s", "<C-S-Up>", keep_select(":m '<lt>-2<cr>gv=gv"),      { desc = "Move selection up" })
+map("n", "<C-S-Up>",   "<cmd>m .-2<cr>==",          { desc = "Move line up" })
+map("i", "<C-S-Up>",   "<esc><cmd>m .-2<cr>==gi",   { desc = "Move line up" })
+map("n", "<C-S-Down>", "<cmd>m .+1<cr>==",          { desc = "Move line down" })
+map("i", "<C-S-Down>", "<esc><cmd>m .+1<cr>==gi",   { desc = "Move line down" })
 
-map("n", "<C-S-Down>", "<cmd>m .+1<cr>==",                    { desc = "Move line down" })
-map("i", "<C-S-Down>", "<esc><cmd>m .+1<cr>==gi",             { desc = "Move line down" })
-map("x", "<C-S-Down>", ":m '>+1<cr>gv=gv",                    { desc = "Move selection down" })
-map("s", "<C-S-Down>", keep_select(":m '>+1<cr>gv=gv"),       { desc = "Move selection down" })
+-- Selections are moved in Lua rather than with ":m '<,'>" + "gv=gv". The
+-- marks and the "=" operator don't agree with 'selection=exclusive' about
+-- where a selection ends, which left lines behind. Instead:
+--   1. the lines are read straight from the live selection,
+--   2. moved with one nvim_buf_set_lines() call (one undo step),
+--   3. and the selection is put back on the same text, without ever
+--      leaving Visual/Select mode -- so nothing can be typed over it.
+-- Moved lines keep their indentation exactly (no re-indent).
+local function move_selection(dir) -- -1 = up, 1 = down
+    return function()
+        local mode   = vim.api.nvim_get_mode().mode
+        local kind   = visual_kind[mode]
+        local select = mode:find("^[sS\19]") ~= nil
+        if not kind then
+            return
+        end
+
+        local a = vim.fn.getpos("v") -- anchor: { buf, line, col (1-based), off }
+        local c = vim.fn.getpos(".") -- cursor
+        local first = math.min(a[2], c[2])
+        local last  = math.max(a[2], c[2])
+
+        -- A charwise selection ending at the very start of a line selects
+        -- nothing on that line, so (like VSCode) that line stays put.
+        if kind == "v" and vim.o.selection == "exclusive" and first < last then
+            local later = a[2] > c[2] and a or c
+            if later[3] == 1 then
+                last = last - 1
+            end
+        end
+
+        -- How far we can actually go (3<C-S-Down> = three lines).
+        local count = vim.v.count1
+        local total = vim.api.nvim_buf_line_count(0)
+        local shift
+        if dir < 0 then
+            shift = math.max(first - count, 1) - first
+        else
+            shift = math.min(last + count, total) - last
+        end
+        if shift == 0 then
+            return -- already at the top / bottom of the file
+        end
+
+        -- Swap the block with the lines it moves over, in one edit.
+        local get   = function(s, e) return vim.api.nvim_buf_get_lines(0, s, e, true) end
+        local block = get(first - 1, last)
+        local lines
+        if shift > 0 then
+            lines = get(last, last + shift)
+            vim.list_extend(lines, block)
+            vim.api.nvim_buf_set_lines(0, first - 1, last + shift, true, lines)
+        else
+            lines = block
+            vim.list_extend(lines, get(first - 1 + shift, first - 1))
+            vim.api.nvim_buf_set_lines(0, first - 1 + shift, last, true, lines)
+        end
+
+        -- Re-anchor the selection on the moved text. "o" swaps the anchor
+        -- and the cursor, so: cursor to the new anchor spot, "o" (makes it
+        -- the anchor), then cursor to its own new spot. "o" is a Visual
+        -- command -- in Select mode it would be typed -- so hop to Visual
+        -- for it and back afterwards.
+        if select then
+            vim.api.nvim_feedkeys(vim.keycode("<C-g>"), "nx", false)
+        end
+        vim.api.nvim_win_set_cursor(0, { a[2] + shift, a[3] - 1 })
+        vim.api.nvim_feedkeys("o", "nx", false)
+        vim.api.nvim_win_set_cursor(0, { c[2] + shift, c[3] - 1 })
+        if select then
+            vim.api.nvim_feedkeys(vim.keycode("<C-g>"), "nx", false)
+        end
+    end
+end
+
+map({ "x", "s" }, "<C-S-Up>",   move_selection(-1), { desc = "Move selection up" })
+map({ "x", "s" }, "<C-S-Down>", move_selection(1),  { desc = "Move selection down" })
 
 -- Splits
 map("n", "<leader>v", "<cmd>vsplit<cr>", { desc = "Vertical split" })
@@ -307,33 +375,118 @@ end
 map("n", "<leader>0", goto_tab(-1), { desc = "Go to last tab" })
 
 -- ------------------------------------------------------------------
--- Word-wise movement (VSCode style)
+-- Word-wise movement and selection (VSCode style)
 -- ------------------------------------------------------------------
--- Like w/b, but never crosses a line boundary: past the last word the
--- cursor stops at end of line, before the first word at column 1.
+-- <C-Left>/<C-Right> jump word to word; add Shift to select while you go.
+-- Neither ever crosses a line boundary: past the last word the cursor
+-- stops at end of line, before the first word at column 1.
 --
--- Selecting by word (<C-S-Left/Right>) is left to Vim: with keymodel=startsel
--- it strips the Shift, starts the selection and reuses these same mappings.
-local function word_move(dir)
-    local pos    = vim.api.nvim_win_get_cursor(0)
-    local len    = #vim.api.nvim_get_current_line()
-    local insert = vim.api.nvim_get_mode().mode:find("^i") ~= nil
+-- The target is computed here instead of with "normal! w"/"b", so the
+-- same code works in every mode and simply sets the cursor -- in Visual
+-- or Select mode that extends the selection, everywhere else it moves.
 
-    vim.cmd("normal! " .. (dir == "right" and "w" or "b"))
-
-    -- The motion wrapped onto another line: clamp back to this one.
-    if vim.api.nvim_win_get_cursor(0)[1] ~= pos[1] then
-        local col = 0
-        if dir == "right" then
-            -- insert mode may sit one past the last character
-            col = insert and len or math.max(len - 1, 0)
-        end
-        vim.api.nvim_win_set_cursor(0, { pos[1], col })
+-- Character classes, the way w/b see them: 0 = blank, 1 = keyword
+-- ('iskeyword', plus every non-ASCII byte so a multibyte character is
+-- never split in half), 2 = punctuation.
+local function char_class(byte)
+    if byte == 32 or byte == 9 then
+        return 0
     end
+    if byte >= 128 or vim.fn.match(string.char(byte), "\\k") == 0 then
+        return 1
+    end
+    return 2
 end
 
-map({ "n", "x", "i" }, "<C-Left>",  function() word_move("left")  end, { desc = "Word left" })
-map({ "n", "x", "i" }, "<C-Right>", function() word_move("right") end, { desc = "Word right" })
+-- Where a word jump from 0-based column `col` lands on this line.
+local function word_target(line, col, dir)
+    local len = #line
+    local i   = col + 1 -- 1-based byte index
+
+    if dir == "right" then
+        if i > len then
+            return len
+        end
+        -- Skip the rest of the current word (or punctuation run)...
+        local c = char_class(line:byte(i))
+        if c ~= 0 then
+            while i <= len and char_class(line:byte(i)) == c do
+                i = i + 1
+            end
+        end
+        -- ...then the blanks after it, landing on the next word's start.
+        while i <= len and char_class(line:byte(i)) == 0 do
+            i = i + 1
+        end
+        return i - 1
+    end
+
+    -- Left: step back over blanks, then to the start of that word.
+    i = math.min(i, len + 1) - 1
+    while i >= 1 and char_class(line:byte(i)) == 0 do
+        i = i - 1
+    end
+    if i < 1 then
+        return 0
+    end
+    local c = char_class(line:byte(i))
+    while i > 1 and char_class(line:byte(i - 1)) == c do
+        i = i - 1
+    end
+    return i - 1
+end
+
+local function word_move(dir)
+    local pos  = vim.api.nvim_win_get_cursor(0)
+    local line = vim.api.nvim_get_current_line()
+    local mode = vim.api.nvim_get_mode().mode
+
+    -- Insert mode and (exclusive) selections may sit one past the last
+    -- character; Normal mode stops on it.
+    local max = #line
+    if not (mode:find("^i") or mode:find("^[vVsS\22\19]")) then
+        max = math.max(#line - 1, 0)
+    end
+
+    local col = math.min(word_target(line, pos[2], dir), max)
+    vim.api.nvim_win_set_cursor(0, { pos[1], col })
+end
+
+-- Reachable from key strings, so mappings below can run it mid-sequence
+-- (e.g. right after "v") without needing remap.
+_G.WordMotion = { move = word_move }
+
+local function move_keys(dir)
+    return ("<Cmd>lua WordMotion.move(%q)<CR>"):format(dir)
+end
+
+for key, dir in pairs({ Left = "left", Right = "right" }) do
+    local function move() word_move(dir) end
+
+    -- Plain Ctrl+Arrow: move. With a selection active, drop it first and
+    -- move from the cursor, like VSCode.
+    map({ "n", "i" }, "<C-" .. key .. ">", move, { desc = "Word " .. dir })
+    map({ "x", "s" }, "<C-" .. key .. ">", "<Esc>" .. move_keys(dir),
+        { desc = "Word " .. dir })
+
+    -- Ctrl+Shift+Arrow: start a selection at the cursor (in Select mode,
+    -- so typing replaces it), or extend the one that's already there.
+    map("n", "<C-S-" .. key .. ">", "v" .. move_keys(dir) .. "<C-g>",
+        { desc = "Select word " .. dir })
+    map({ "x", "s" }, "<C-S-" .. key .. ">", move, { desc = "Select word " .. dir })
+
+    -- From Insert mode, <C-o>v starts a selection that returns to Insert
+    -- when it ends. <C-o> at end of line nudges the cursor one left,
+    -- which would leave the last character out of the anchor, so in that
+    -- case step back onto the end ("l" -- allowed in Visual mode) and
+    -- swap ends ("o") to put the anchor there.
+    map("i", "<C-S-" .. key .. ">", function()
+        local col = vim.api.nvim_win_get_cursor(0)[2]
+        local len = #vim.api.nvim_get_current_line()
+        local start = (len > 0 and col >= len) and "<C-o>vlo" or "<C-o>v"
+        return start .. move_keys(dir) .. "<C-g>"
+    end, { expr = true, desc = "Select word " .. dir })
+end
 
 -- ------------------------------------------------------------------
 -- Word-wise deletion (VSCode style)
@@ -344,10 +497,12 @@ map({ "n", "x", "i" }, "<C-Right>", function() word_move("right") end, { desc = 
 --
 -- Which key actually arrives depends on the terminal: GUIs and
 -- kitty-protocol terminals send <C-BS>, but most terminals send ^H
--- (= <C-h>), which stays mapped to find-and-replace below. On those,
--- reach for the built-in <C-w> instead -- same deletion, minus the
--- undo-step split.
-map("i", "<C-BS>", "<C-g>u<C-w>", { desc = "Delete word left" })
+-- (= <C-h>) for Ctrl+Backspace. Map both in insert mode, so it works
+-- either way. (That's why find-and-replace below isn't on <C-h> in
+-- insert mode -- press <Esc> first, then <C-h>.)
+for _, key in ipairs({ "<C-BS>", "<C-h>" }) do
+    map("i", key, "<C-g>u<C-w>", { desc = "Delete word left" })
+end
 
 -- Ctrl+Delete, the other half of the pair. <C-o> at the very end of a
 -- line nudges the cursor one left, which would make dw eat the last
@@ -374,8 +529,8 @@ map("n", "<C-Del>", '"_dw', { desc = "Delete word right" })
 -- the cursor where you'd start typing; <cr> runs it. <F3> / <S-F3> walk
 -- the matches, <Esc> clears the highlighting.
 --
--- Note: many terminals send ^H for Ctrl+Backspace, so the insert-mode
--- half of <C-h> shadows it. Drop "i" from that map if you use it.
+-- <C-h> is Normal / Visual / Select only: in insert mode it's taken by
+-- Ctrl+Backspace (see word-wise deletion above).
 --
 -- Patterns are seeded with flags so only what you actually typed or
 -- selected counts as a match:
@@ -385,12 +540,6 @@ map("n", "<C-Del>", '"_dw', { desc = "Delete word right" })
 -- Set this to false for substring matching, or delete the flags from the
 -- command line before pressing <cr> to loosen a single search.
 local exact_match = true
-
--- Select mode has its own mode letters; getregion() only knows Visual's.
-local visual_kind = {
-    v = "v", V = "V", ["\22"] = "\22", -- Visual, line, block
-    s = "v", S = "V", ["\19"] = "\22", -- the Select equivalents
-}
 
 -- The selected lines, or nil if there's no selection.
 local function selected_lines()
@@ -478,7 +627,7 @@ local function replace()
 end
 
 map({ "n", "i", "x", "s" }, "<C-f>", find,    { desc = "Find" })
-map({ "n", "i", "x", "s" }, "<C-h>", replace, { desc = "Find and replace" })
+map({ "n", "x", "s" },      "<C-h>", replace, { desc = "Find and replace" })
 
 map("n",               "<F3>",   "n",      { desc = "Next match" })
 map({ "i", "x", "s" }, "<F3>",   "<esc>n", { desc = "Next match" })
@@ -823,10 +972,17 @@ require("lazy").setup({
             },
             opts = {
                 signs = false, -- gitsigns already owns the gutter
-                -- The default patterns require the colon: "TODO" stays plain
-                -- text and lights up the moment you type "TODO:". The plugin
-                -- re-highlights from nvim_buf_attach's on_lines, which fires
-                -- on every keystroke, so the color appears as you type.
+                -- The default patterns require a colon ("TODO:"). These
+                -- drop it, so a bare "TODO" lights up too. The trailing
+                -- word boundary (> in Vim regex, \b in ripgrep) keeps
+                -- e.g. "NOTEBOOK" from matching NOTE. Only comments are
+                -- checked, so "todo" in code stays plain.
+                highlight = {
+                    pattern = [[.*<(KEYWORDS)>]], -- Vim regex (very magic)
+                },
+                search = {
+                    pattern = [[\b(KEYWORDS)\b]], -- ripgrep regex, for ]t [t and the picker
+                },
             },
         },
 
